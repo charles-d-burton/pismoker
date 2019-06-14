@@ -183,7 +183,7 @@ func RelayControlLoop(wg *sync.WaitGroup) {
 		select {
 		case reading := <-receiver:
 			log.Println("Received temperature update")
-			update := control.Update(reading.C)
+			update := control.Update(reading.F)
 			log.Println("Control says: ", update)
 			if update == 0 {
 
@@ -244,7 +244,7 @@ func PublishToNATS(wg *sync.WaitGroup) {
 	}
 	log.Println("NATS Connected")
 	log.Println("Initializing callback")
-	sc.Subscribe("smoker-readings", func(m *stan.Msg) {
+	sc.Subscribe("smoker-control", func(m *stan.Msg) {
 		ProcessNATSMessage(m)
 	}, stan.StartWithLastReceived())
 	for {
@@ -265,4 +265,9 @@ func PublishToNATS(wg *sync.WaitGroup) {
 //ProcessNATSMessage process a control message from the NATS server
 func ProcessNATSMessage(msg *stan.Msg) {
 	log.Println(msg)
+	var controlState ControlState
+	err := json.Unmarshal(msg.Data, &controlState)
+	if err != nil {
+		log.Println(err)
+	}
 }
