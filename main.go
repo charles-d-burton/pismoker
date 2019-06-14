@@ -34,8 +34,8 @@ var (
 
 //ControlState Represent the runtime state of the smoker
 type ControlState struct {
-	PwrOn   bool    `json:"pwr_on"`
-	SetTemp float64 `json:"set_temp"`
+	Pwr     bool    `json:"pwr"`
+	Temp    float64 `json:"temp"`
 	RunTime int     `json:"run_time"`
 }
 
@@ -48,11 +48,12 @@ type Reading struct {
 
 //PIDState Represent the state of the PID controller
 type PIDState struct {
-	Kp     float64 `json:"kp"`
-	Ki     float64 `json:"ki"`
-	Kd     float64 `json:"kd"`
-	Window int     `json:"window"`
-	Set    float64 `json:"-"`
+	sync.Mutex
+	Kp           float64      `json:"kp"`
+	Ki           float64      `json:"ki"`
+	Kd           float64      `json:"kd"`
+	Window       int          `json:"window"`
+	ControlState ControlState `json:"-"`
 }
 
 //Receivers Store channels that receive fanout messages
@@ -166,34 +167,50 @@ func RelayControlLoop(wg *sync.WaitGroup) {
 	receivers.Receivers = append(receivers.Receivers, receiver)
 	receivers.Unlock()
 	p := gpioreg.ByName(relayPwr)
+	if p == nil {
+		log.Fatal("Unable to locat relay control pin")
+	}
+	pidState.Lock()
 	pidState.Kp = 5
 	pidState.Ki = 3
 	pidState.Kd = 3
-	pidState.Window = 1000
-	pidState.Set = 24
+	//pidState.Window = 1000
+	//pidState.ControlState = 24
+	pidState.Unlock()
 
 	if p == nil {
 		log.Fatal("Relay pin not found")
 	}
-	control := pidctrl.NewPIDController(pidState.Kp, pidState.Ki, pidState.Kd)
-	control.SetOutputLimits(0, 1)
-	control.Set(pidState.Set)
+	pid := pidctrl.NewPIDController(pidState.Kp, pidState.Ki, pidState.Kd)
+	pid.SetOutputLimits(0, 1)
+	pwrState := false
 
 	for {
+		pidState.Lock()
+		pid.Set(pidState.ControlState.Temp)
+		pwrState = pidState.ControlState.Pwr
+		pidState.Unlock()
 		select {
 		case reading := <-receiver:
 			log.Println("Received temperature update")
-			update := control.Update(reading.F)
-			log.Println("Control says: ", update)
-			if update == 0 {
+			update := pid.Update(reading.F)
+			log.Println("PID says: ", update)
+			if pwrState {
+				if update == 0 {
 
-				log.Println("Turning off relay")
-				if err := p.Out(gpio.Low); err != nil {
-					log.Println(err)
+					log.Println("Turning off relay")
+					if err := p.Out(gpio.Low); err != nil {
+						log.Println(err)
+					}
+				} else {
+					log.Println("Turning on relay")
+					if err := p.Out(gpio.High); err != nil {
+						log.Println(err)
+					}
 				}
 			} else {
-				log.Println("Turning on relay")
-				if err := p.Out(gpio.High); err != nil {
+				log.Println("Relay Powered Off")
+				if err := p.Out(gpio.Low); err != nil {
 					log.Println(err)
 				}
 			}
@@ -264,10 +281,14 @@ func PublishToNATS(wg *sync.WaitGroup) {
 
 //ProcessNATSMessage process a control message from the NATS server
 func ProcessNATSMessage(msg *stan.Msg) {
+	defer pidState.Unlock()
 	log.Println(msg)
 	var controlState ControlState
 	err := json.Unmarshal(msg.Data, &controlState)
 	if err != nil {
 		log.Println(err)
 	}
+	pidState.Lock()
+	pidState.ControlState = controlState
+
 }
