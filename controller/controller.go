@@ -69,11 +69,11 @@ func init() {
 }
 
 //StartServer starts the control server connecting to the defined nats host
-func StartServer(natsHost string) error {
+func StartServer(natsHost, publishTopic, controlTopic string) error {
 	var wg sync.WaitGroup
 	wg.Add(3)
 	go Stop()
-	go PublishToNATS(natsHost, &wg)
+	go PublishToNATS(natsHost, publishTopic, controlTopic, &wg)
 
 	log.Println("Starting GPIO initialization")
 	if _, err := host.Init(); err != nil {
@@ -245,7 +245,7 @@ func ReadQueue() {
 }
 
 //PublishToNATS publish Reading to the NATS server
-func PublishToNATS(natsHost string, wg *sync.WaitGroup) {
+func PublishToNATS(natsHost, publishTopic, controlTopic string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	receiver := make(chan Reading, 100)
 	log.Println("Registering receiver")
@@ -264,9 +264,10 @@ func PublishToNATS(natsHost string, wg *sync.WaitGroup) {
 	}
 	log.Println("NATS Connected")
 	log.Println("Initializing callback")
-	sc.Subscribe("smoker-control", func(m *stan.Msg) {
+	sc.Subscribe(controlTopic, func(m *stan.Msg) {
 		ProcessNATSMessage(m)
 	}, stan.StartWithLastReceived())
+	log.Println("Listening for messages on topic: ", controlTopic)
 	for {
 		select {
 		case reading := <-receiver:
@@ -274,7 +275,7 @@ func PublishToNATS(natsHost string, wg *sync.WaitGroup) {
 			if err != nil {
 				log.Println(err)
 			}
-			sc.Publish("smoker-readings", data)
+			sc.Publish(publishTopic, data)
 		case <-stopper:
 			log.Println("Stopping publish")
 			return
