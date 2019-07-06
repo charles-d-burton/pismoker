@@ -50,6 +50,7 @@ type Reading struct {
 //PIDState Represent the state of the PID controller
 type PIDState struct {
 	sync.Mutex
+	Started      bool         `json:"started"`
 	Kp           float64      `json:"kp"`
 	Ki           float64      `json:"ki"`
 	Kd           float64      `json:"kd"`
@@ -154,11 +155,10 @@ func ReadLoop(wg *sync.WaitGroup) error {
 			}
 		case <-stopper:
 			log.Println("Closing read loop")
+			close(readingQueue)
 			return errors.New("Stopping read loop")
 		}
 	}
-
-	return nil
 }
 
 //Receive a Reading and then peform the PID control
@@ -286,6 +286,7 @@ func PublishToNATS(natsHost, publishTopic, controlTopic string, wg *sync.WaitGro
 //ProcessNATSMessage process a control message from the NATS server
 func ProcessNATSMessage(msg *stan.Msg) {
 	defer pidState.Unlock()
+	log.Println("Received control state update")
 	log.Println(msg)
 	var controlState ControlState
 	err := json.Unmarshal(msg.Data, &controlState)
@@ -293,6 +294,12 @@ func ProcessNATSMessage(msg *stan.Msg) {
 		log.Println(err)
 	}
 	pidState.Lock()
+	//Keeps the machine from powering on right away
+	if !pidState.Started {
+		log.Println("Initial startup message, defaulting to off")
+		controlState.Pwr = false
+		pidState.Started = true
+	}
 	pidState.ControlState = controlState
 
 }
