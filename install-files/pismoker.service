@@ -1,0 +1,13 @@
+[Unit]
+Description="Runs the pi smoker"
+Wants=network.target
+After=network.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5s
+ExecStart=/home/pi/pismoker
+
+[Install]
+WantedBy=multi-user.targets
